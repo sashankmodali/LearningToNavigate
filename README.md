@@ -11,7 +11,7 @@ conda activate habitat
 #### conda install habitat-sim
 - To install habitat-sim with bullet physics
    ```
-   conda install habitat-sim withbullet -c conda-forge -c aihabitat
+   conda install habitat-sim withbullet headless -c conda-forge -c aihabitat
    ```
 
 #### Clone the repository
@@ -61,23 +61,39 @@ LearningToNavigate/
 
 After setting up the environment:
 
-1. For Milestone1, run the following:
+1. For Milestone 1, run the following:
 ```
 . milestone1.sh
 ```
   OR
 ```
 conda activate habitat
+
 python main.py --print_images 1
 ```
-2. To generate training data and train_depth1, run the following:
+2. To generate training data and train depth1, run the following:
 ```
 . generate_training_data.sh
+
 python train_depth1.py
 ```
   OR
 ```
 conda activate habitat
+
 python main.py --print_images 1 -d ./training_data/ -el 10000 --task generate_train
+
 python train_depth1.py
+```
+3. For Milestone 2 , run the following:
+```
+. milestone2.sh
+```
+  OR
+```
+conda activate habitat
+
+python nslam.py --split val --eval 1 --train_global 0 --train_local 0 --train_slam 0 --load_global pretrained_models/model_best.global --load_local pretrained_models/model_best.local --load_slam pretrained_models/model_best.slam -n 1 --print_images 1
+
+python generate_video.py
 ```

@@ -90,6 +90,15 @@ def get_args():
     parser.add_argument('--randomize_env_every', type=int, default=1000,
                         help="randomize scene in a thread every k episodes")
 
+    parser.add_argument('--dcropx', type = float, default =1.0,
+                        help="crop depth map along x to increase sample efficiency")
+    parser.add_argument('--dcropy', type = float, default =0.25,
+                        help="crop depth map along y to increase sample efficiency")
+
+    # Task specifcations
+    parser.add_argument('--task', type = str, default ="milestone2",
+                        help="task to perform. Milestone1 saves 1 image.")
+
     ## Global Policy RL PPO Hyperparameters
     parser.add_argument('--global_lr', type=float, default=2.5e-5,
                         help='global learning rate (default: 2.5e-5)')
