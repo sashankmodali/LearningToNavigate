@@ -358,13 +358,8 @@ def main():
     ppo_reward = torch.zeros(num_scenes, 1).to(device)
     torch.set_grad_enabled(False)
 
-<<<<<<< HEAD
 
     splfile = open("{}/spl.txt".format(dump_dir), "w+")
-=======
-    # def compute():
-
->>>>>>> working ActiveNeuralSlam till milestone 2
     for ep_num in range(num_episodes):
         for step in range(args.max_episode_length):
             total_num_steps += 1
