@@ -424,7 +424,7 @@ def ppo_args():
     )
     return parser
 
-#!/usr/bin/env python3
+#!/usr/bin/R python3
 
 # Copyright (c) Facebook, Inc. and its affiliates.
 # This source code is licensed under the MIT license found in the
@@ -434,8 +434,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from habitat_baselines.rl.ppo.ppo_utils import CategoricalNet, Flatten
-
+from habitat_baselines.utils.common import CategoricalNet
 
 class Policy(nn.Module):
     def __init__(

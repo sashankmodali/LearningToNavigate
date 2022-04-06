@@ -246,7 +246,6 @@ def run_training():
                 step_observation = {
                     k: v[step] for k, v in rollouts.observations.items()
                 }
-
                 (
                     values,
                     actions,

@@ -5,6 +5,9 @@ tmp/**
 training_data/**
 milestone1.zip
 depth_net.pth
+checkpoints/**
+logs/**
+*.p
 
 ## Removing Code Optimizations
 __pycache__/**
