@@ -20,6 +20,7 @@ from habitat.config.default import get_config
 from habitat.datasets.pointnav.pointnav_dataset import PointNavDatasetV1
 from ppo_utils import PPO, Policy, batch_obs
 
+
 class NavRLEnv(habitat.RLEnv):
     def __init__(self, config_env, config_baseline, dataset):
         self._config_env = config_env.TASK
@@ -99,50 +100,50 @@ def make_env_fn(config_env, config_baseline, rank):
     return env
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, required=True)
-    parser.add_argument("--sim-gpu-id", type=int, required=True)
-    parser.add_argument("--pth-gpu-id", type=int, required=True)
-    parser.add_argument("--num-processes", type=int, required=True)
-    parser.add_argument("--hidden-size", type=int, default=512)
-    parser.add_argument("--count-test-episodes", type=int, default=100)
-    parser.add_argument(
-        "--sensors",
-        type=str,
-        default="RGB_SENSOR,DEPTH_SENSOR",
-        help="comma separated string containing different"
-        "sensors to use, currently 'RGB_SENSOR' and"
-        "'DEPTH_SENSOR' are supported",
-    )
-    parser.add_argument(
-        "--task-config",
-        type=str,
-        default="habitat-lab/configs/tasks/pointnav.yaml",
-        help="path to config yaml containing information about task",
-    )
-    args = parser.parse_args()
+def eval_ppo(model_path,sim_gpu_id,pth_gpu_id,num_processes,count_test_episodes=100,hidden_size=512,sensors="RGB_SENSOR,DEPTH_SENSOR",task_config="habitat-lab/configs/tasks/pointnav.yaml"):
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--model-path", type=str, required=True)
+    # parser.add_argument("--sim-gpu-id", type=int, required=True)
+    # parser.add_argument("--pth-gpu-id", type=int, required=True)
+    # parser.add_argument("--num-processes", type=int, required=True)
+    # parser.add_argument("--hidden-size", type=int, default=512)
+    # parser.add_argument("--count-test-episodes", type=int, default=100)
+    # parser.add_argument(
+    #     "--sensors",
+    #     type=str,
+    #     default="RGB_SENSOR,DEPTH_SENSOR",
+    #     help="comma separated string containing different"
+    #     "sensors to use, currently 'RGB_SENSOR' and"
+    #     "'DEPTH_SENSOR' are supported",
+    # )
+    # parser.add_argument(
+    #     "--task-config",
+    #     type=str,
+    #     default="habitat-lab/configs/tasks/pointnav.yaml",
+    #     help="path to config yaml containing information about task",
+    # )
+    # args = parser.parse_args()
 
-    device = torch.device("cuda:{}".format(args.pth_gpu_id))
+    device = torch.device("cuda:{}".format(pth_gpu_id))
 
     env_configs = []
     baseline_configs = []
 
-    for _ in range(args.num_processes):
-        config_env = get_config(config_paths=args.task_config)
+    for _ in range(num_processes):
+        config_env = get_config(config_paths=task_config)
         config_env.defrost()
         config_env.DATASET.SPLIT = "val"
         config_env.DATASET.DATA_PATH = (
         "data/datasets/pointnav/gibson/v1/{split}/{split}.json.gz")
         config_env.DATASET.TYPE = "PointNavDataset-v1"
-        agent_sensors = args.sensors.strip().split(",")
+        agent_sensors = sensors.strip().split(",")
         for sensor in agent_sensors:
             assert sensor in ["RGB_SENSOR", "DEPTH_SENSOR"]
         config_env.SIMULATOR.AGENT_0.SENSORS = agent_sensors
         config_env.freeze()
         env_configs.append(config_env)
 
-        config_baseline = cfg_baseline(opts=['BASE_TASK_CONFIG_PATH',args.task_config])
+        config_baseline = cfg_baseline(opts=['BASE_TASK_CONFIG_PATH',task_config])
         baseline_configs.append(config_baseline)
 
     assert len(baseline_configs) > 0, "empty list of datasets"
@@ -151,12 +152,12 @@ def main():
         make_env_fn=make_env_fn,
         env_fn_args=tuple(
             tuple(
-                zip(env_configs, baseline_configs, range(args.num_processes))
+                zip(env_configs, baseline_configs, range(num_processes))
             )
         ),
     )
 
-    ckpt = torch.load(args.model_path, map_location=device)
+    ckpt = torch.load(model_path, map_location=device)
 
     actor_critic = Policy(
         observation_space=envs.observation_spaces[0],
@@ -194,11 +195,11 @@ def main():
     current_episode_reward = torch.zeros(envs.num_envs, 1, device=device)
 
     test_recurrent_hidden_states = torch.zeros(
-        args.num_processes, args.hidden_size, device=device
+        num_processes, hidden_size, device=device
     )
-    not_done_masks = torch.zeros(args.num_processes, 1, device=device)
+    not_done_masks = torch.zeros(num_processes, 1, device=device)
 
-    while episode_counts.sum() < args.count_test_episodes:
+    while episode_counts.sum() < count_test_episodes:
         with torch.no_grad():
             _, actions, _, test_recurrent_hidden_states = actor_critic.act(
                 batch,
@@ -239,9 +240,9 @@ def main():
     print("Average episode success: {:.6f}".format(episode_success_mean))
     print("Average episode spl: {:.6f}".format(episode_spl_mean))
 
-    # return episode_reward_mean , episode_spl_mean, episode_success_mean
+    return episode_reward_mean , episode_spl_mean, episode_success_mean
 
 
-if __name__ == "__main__":
-    # pass
-   main()
+# if __name__ == "__main__":
+#     pass
+    # eps_reward_mean , eps_spl_mean, eps_success_mean = main()

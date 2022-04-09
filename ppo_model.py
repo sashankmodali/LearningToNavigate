@@ -284,6 +284,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
 
     def ppo_args():
+
         parser = argparse.ArgumentParser(description='PPO policy for short actions')
 
         parser.add_argument('--camera_height', type=float, default=1.25,
@@ -297,9 +298,9 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                         help='Frame width (default:84)')
         parser.add_argument('-efh', '--env_frame_height', type=int, default=256,
                             help='Frame height (default:84)')
-        parser.add_argument('-fw', '--frame_width', type=int, default=256,
+        parser.add_argument('-fw', '--frame_width', type=int, default=224,
                             help='Frame width (default:84)')
-        parser.add_argument('-fh', '--frame_height', type=int, default=256,
+        parser.add_argument('-fh', '--frame_height', type=int, default=224,
                             help='Frame height (default:84)')
 
 
@@ -309,8 +310,6 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
         parser.add_argument("--split", type=str, default="val",
                         help="dataset split (train | val | val_mini) ")
-
-
         parser.add_argument(
             "--clip-param",
             type=float,
@@ -398,6 +397,9 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
         )
         parser.add_argument(
             "--log-file", type=str, required=True, help="path for log file"
+        )
+        parser.add_argument(
+            "--save-file", type=str, default = "latest-train-results-from-train-ppo", help="path for rewards files"
         )
         parser.add_argument(
             "--reward-window-size",
@@ -548,6 +550,30 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
             self.cnn = self._init_perception_model(observation_space)
 
+
+            # #------------------------------------------------------------------------------- Resnetl5
+            # self.dropout = 0.5
+
+            # resnet = models.resnet18(pretrained=True)
+            # self.resnet_l5 = nn.Sequential(*list(resnet.children())[0:8])
+
+            # # Extra convolution layer
+            # self.conv = nn.Sequential(*filter(bool, [
+            #     nn.Conv2d(512, 64, (1, 1), stride=(1, 1)),
+            #     nn.ReLU(),
+            #     nn.Flatten()
+            # ]))
+
+            # # projection layers
+            # self.proj1 = nn.Linear(1024, hidden_size)
+            # if self.dropout > 0:
+            #     self.dropout1 = nn.Dropout(self.dropout)
+            # self.linear = nn.Linear(hidden_size, hidden_size)
+            # self.critic_linear = nn.Linear(hidden_size, 1)
+            # # self.train()
+            # #-------------------------------------------------------------------------------
+
+
             if self.is_blind:
                 self.rnn = nn.GRU(self._n_input_goal, self._hidden_size)
             else:
@@ -599,7 +625,6 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                         kernel_size=np.array(kernel_size, dtype=np.float32),
                         stride=np.array(stride, dtype=np.float32),
                     )
-                print(cnn_dims)
 
                 return nn.Sequential(
                     nn.Conv2d(
@@ -816,9 +841,9 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                         "ckpt.{}.pth".format(update),
                     ),
                 )
-                if test_rewards_arr!=[]:
+                if test_reward_arr!=[]:
                     test_rewards = np.array(test_reward_arr)
-                    np.save("latest-train-results-from-train-ppo",test_rewards)
+                    np.save(args.save_file,test_rewards)
 
                     # # print(test_rewards)
 
@@ -834,7 +859,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     plt.xlabel("Episodes")
                     plt.plot(test_rewards[:,-1],test_rewards[:,2])
                     plt.tight_layout()
-                    plt.savefig("latest-train-results-from-train-ppo.png")
+                    plt.savefig("{}.png".format(args.save_file))
 
                 sys.exit(0)
             signal(SIGINT, handler)

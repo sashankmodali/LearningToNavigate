@@ -8,6 +8,7 @@ import os, sys
 import contextlib
 import random
 from collections import deque
+from collections import OrderedDict
 import gym
 from time import time,sleep
 
@@ -25,16 +26,17 @@ import habitat
 from habitat_baselines.config.default import get_config as cfg_baseline
 from habitat import logger
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
+from habitat.core.spaces import ActionSpace, EmptySpace
 from habitat.config.default import get_config as cfg_env
 from habitat.datasets.registration import make_dataset
-from ppo_utils import PPO,Policy, RolloutStorage,batch_obs, ppo_args, update_linear_schedule
+from ppo_model import PPO,Policy, RolloutStorage,batch_obs, ppo_args, update_linear_schedule
 from habitat.datasets.pointnav.pointnav_dataset import PointNavDatasetV1
-from evaluate_ppo_fn import eval_ppo
+from to_evaluate_ppo_fn import eval_ppo
 
 # with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 #     print("This won't be printed.")
 #     sleep(20)
-#     print("BLue blah blah")
+#     print("foo")
 
 def _preprocess_depth(depth):
     depth = depth[:, :, 0]*1
@@ -59,44 +61,42 @@ class NavRLEnv(habitat.RLEnv):
         self._previous_target_distance = None
         self._previous_action = None
         self._episode_distance_covered = None
+        self.num_actions = 3
 
-        self.num_actions = 4
-
-        self.action_space = gym.spaces.Discrete(self.num_actions)
-
-        print(gym.spaces.Discrete(self.num_actions))
-
-        
+        # self.action_space = gym.spaces.Discrete(self.num_actions)
 
         self.res = transforms.Compose([transforms.ToPILImage(),
                     transforms.Resize((args.frame_height, args.frame_width),
-                                      interpolation = Image.NEAREST)])
+                                      interpolation = Image.NEAREST),transforms.ToTensor()])
 
         # print(self.observation_space)
 
         super().__init__(config_env, dataset)
 
-        # print("\n\n\n\n\n\n\n\n\nDisplaying this shit\n\n\n\n\n\n\n")
+        # print("\n\n\n\n\n\n\n\n\nDisplaying foo\n\n\n\n\n\n\n")
+        self.observation_space.spaces["depth"] = gym.spaces.Box(0, 255,
+                                                (args.frame_height,
+                                                    args.frame_width,1),
+                                                dtype='uint8')
 
-        # self.observation_space = {"depth" : gym.spaces.Box(0, 255,
-        #                                         (1, args.frame_height,
-        #                                             args.frame_width),
-        #                                         dtype='uint8') ,\
-        #                             "pointgoal_with_gps_compass" : self.observation_space["pointgoal_with_gps_compass"], "rgb" : gym.spaces.Box(0, 255,
-        #                                         (3, args.frame_height,
-        #                                             args.frame_width),
-        #                                         dtype='uint8')}
-        # self.observation_space.spaces["depth"] = gym.spaces.Box(0, 255,
-        #                                         (1, args.frame_height,
-        #                                             args.frame_width),
-        #                                         dtype='uint8')
+        self.observation_space.spaces["rgb"] = gym.spaces.Box(0, 255,
+                                                (args.frame_height,
+                                                    args.frame_width,3),
+                                                dtype='uint8')
 
-        # self.observation_space.spaces["rgb"] = gym.spaces.Box(0, 255,
-        #                                         (3, args.frame_height,
-        #                                             args.frame_width),
-        #                                         dtype='uint8')
+        # print(self.observation_space,self.observation_space.spaces,self.action_space.spaces,self.num_actions)
 
-        # print(self.observation_space,self.observation_space.spaces,self.action_space)
+        self.action_space.spaces = OrderedDict([("MOVE_FOWARD", EmptySpace()),
+            ("TURN_LEFT", EmptySpace()),
+            ("TURN_RIGHT", EmptySpace()),])
+        # print(self.action_space)
+        # print(ActionSpace(gym.spaces.Dict({
+        #     "MOVE_FOWARD": EmptySpace(),
+        #     "TURN_LEFT": EmptySpace(),
+        #     "TURN_RIGHT": EmptySpace(),
+        # })))
+
+        # print(gym.spaces.Discrete(self.num_actions))
 
     def reset(self):
         self._previous_action = None
@@ -107,13 +107,12 @@ class NavRLEnv(habitat.RLEnv):
         rgb = observations['rgb'].astype(np.uint8)
         depth_ = observations['depth'].astype(np.uint8)
         self.obs = rgb # For visualization
+
+        # print(rgb.shape)
         
         if self.args.frame_width != self.args.env_frame_width:
-            rgb = np.asarray(self.res(rgb))
-            depth_ = np.asarray(self.res(depth_))
-            depth_ = np.expand_dims(depth_, axis=0)
-        #state = rgb.transpose(2, 0, 1)
-        # state = np.concatenate((rgb.transpose(2, 0, 1), depth_))
+            rgb = np.asarray(self.res(rgb).permute(1,2,0))
+            depth_ = np.asarray(self.res(depth_).permute(1,2,0))
 
         self._previous_target_distance = self.habitat_env.current_episode.info[
             "geodesic_distance"
@@ -124,9 +123,24 @@ class NavRLEnv(habitat.RLEnv):
         obs["rgb"] = rgb
         obs["depth"] = depth_
         obs["pointgoal_with_gps_compass"] = observations["pointgoal_with_gps_compass"]
-        return observations, infos
+        return obs, infos
 
     def step(self, action):
+
+        # print("\n\n\n\n\n\nDISPLAYING ACTION NOW>>>>>>>>>>> \n\n")
+        # print(HabitatSimActions.STOP,HabitatSimActions.MOVE_FORWARD,HabitatSimActions.TURN_LEFT,HabitatSimActions.TURN_RIGHT)
+        # print(action)
+
+        # Action remapping. This is because we have only MOVE_FORWARD, TURN_LEFT, TURN_RIGHT which are mapped from 0,1,2 to 1,2,3
+        if action == 0: # Forward
+            action = 1
+        elif action == 1: # Left
+            action = 2
+        elif action == 2: # Right
+            action = 3
+        elif (action == 3):# Stop
+            action = 0
+
         self._previous_action = action
         observations, reward, done, info = super().step(action)
 
@@ -135,16 +149,15 @@ class NavRLEnv(habitat.RLEnv):
         self.obs = rgb # For visualization
         
         if self.args.frame_width != self.args.env_frame_width:
-            rgb = np.asarray(self.res(rgb))
-            depth_ = np.asarray(self.res(depth_))
-            depth_ = np.expand_dims(depth_, axis=0)
+            rgb = np.asarray(self.res(rgb).permute(1,2,0))
+            depth_ = np.asarray(self.res(depth_).permute(1,2,0))
 
         obs = {}
         obs["rgb"] = rgb
         obs["depth"] = depth_
         obs["pointgoal_with_gps_compass"] = observations["pointgoal_with_gps_compass"]
 
-        return observations, reward,done,info
+        return obs,reward,done,info
 
 
     def get_reward_range(self):
@@ -175,8 +188,9 @@ class NavRLEnv(habitat.RLEnv):
 
     def _episode_success(self):
         if (
-            self._previous_action == HabitatSimActions.STOP
-            and self._distance_target() < self._config_env.SUCCESS_DISTANCE
+            # self._previous_action == HabitatSimActions.STOP
+            # and
+            self._distance_target() < self._config_env.SUCCESS_DISTANCE
         ):
             return True
         return False
@@ -366,9 +380,9 @@ def run_training():
         if not os.path.exists(os.path.join(args.checkpoint_folder,load_path)):
             raise Exception("load path {} doesn't exist".format(load_path))
         agent.load_state_dict(torch.load(os.path.join(args.checkpoint_folder,load_path))["state_dict"])
-        if os.path.exists("./latest-train-results-from-train-ppo.npy"):
+        if os.path.exists("./{}.npy".format(args.save_file)):
             print("Loading rewards array")
-            test_rewards = np.load("./latest-train-results-from-train-ppo.npy")
+            test_rewards = np.load("./{}.npy".format(args.save_file))
             # print(test_rewards[-1,:])
             episode_counts = torch.tensor([[test_rewards[-1,-1]//envs.num_envs]]).repeat(envs.num_envs,1)
             episode_counts[-1,0] += test_rewards[-1,-1]-episode_counts.sum()
@@ -386,7 +400,7 @@ def run_training():
             ),
         )
 
-        np.save("latest-train-results-from-train-ppo",test_rewards)
+        np.save("{}".format(args.save_file),test_rewards)
 
         # # print(test_rewards)
         if test_rewards!=[]:
@@ -405,7 +419,7 @@ def run_training():
             plt.xlabel("Episodes")
             plt.plot(test_rewards[:,-1],test_rewards[:,2])
             plt.tight_layout()
-            plt.savefig("latest-train-results-from-train-ppo.png")
+            plt.savefig("{}.png".format(args.save_file))
         sys.exit(0)
     signal(SIGINT, handler)
     # print("Number Episodes : {}".format(args.num_episodes))
@@ -453,8 +467,6 @@ def run_training():
             masks = torch.tensor(
                 [[0.0] if done else [1.0] for done in dones], dtype=torch.float
             )
-            # for i in range(len(dones)):
-            #     dones_prev[i] = dones[i]
 
             current_episode_reward += rewards
             episode_rewards += (1 - masks) * current_episode_reward
@@ -543,14 +555,13 @@ def run_training():
                     "ckpt.{}.pth".format(update),
                 ),
             )
-            # model_path,sim_gpu_id,pth_gpu_id,num_processes,hidden_size=512,count_test_episodes=100,sensors="RGB_SENSOR,DEPTH_SENSOR",task_config="habitat-lab/configs/tasks/pointnav.yaml"
 
-            episode_reward_mean , episode_spl_mean, episode_success_mean = eval_ppo(model_path=os.path.join(args.checkpoint_folder,"ckpt.{}.pth".format(update)), sim_gpu_id=args.sim_gpu_id, pth_gpu_id=args.pth_gpu_id, num_processes=args.num_processes,count_test_episodes=30)
+            episode_reward_mean , episode_spl_mean, episode_success_mean = eval_ppo(args=args, model_path=os.path.join(args.checkpoint_folder,"ckpt.{}.pth".format(update)), sim_gpu_id=args.sim_gpu_id, pth_gpu_id=args.pth_gpu_id, num_processes=args.num_processes,count_test_episodes=30,hidden_size=args.hidden_size,sensors= args.sensors,task_config=args.task_config)
 
             test_rewards.append([episode_reward_mean , episode_spl_mean, episode_success_mean,episode_counts.sum()])
 
             test_rewards_arr = np.array(test_rewards)
-            np.save("latest-train-results-from-train-ppo",test_rewards_arr)
+            np.save(args.save_file,test_rewards_arr)
 
             # # print(test_rewards)
             # ::max(len(test_rewards_arr)//1000,-1,1)
@@ -566,7 +577,7 @@ def run_training():
             plt.xlabel("Episodes")
             plt.plot(test_rewards_arr[:,-1],test_rewards_arr[:,2])
             plt.tight_layout()
-            plt.savefig("latest-train-results-from-train-ppo.png")
+            plt.savefig("{}.png".format(args.save_file))
 
             # print("Average episode reward: {:.6f}".format(episode_reward_mean))
             # print("Average episode success: {:.6f}".format(episode_success_mean))
@@ -578,7 +589,7 @@ def run_training():
         #     break
     # print(test_rewards)
     test_rewards = np.array(test_rewards)
-    np.save("latest-train-results-from-train-ppo",test_rewards)
+    np.save(args.save_file,test_rewards)
 
     # # print(test_rewards)
 
@@ -594,7 +605,7 @@ def run_training():
     plt.xlabel("Episodes")
     plt.plot(test_rewards[:,-1],test_rewards[:,2])
     plt.tight_layout()
-    plt.savefig("latest-train-results-from-train-ppo.png")
+    plt.savefig("{}.png".format(args.save_file))
 
 if __name__ == "__main__":
     run_training()

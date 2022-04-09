@@ -1,5 +1,7 @@
 ## Removing datasets and generated files
 data/**
+data
+habitat-lab
 habitat-lab/**
 tmp/**
 training_data/**
@@ -9,6 +11,11 @@ pretrained_models/**
 checkpoints/**
 logs/**
 *.p
+*.npy
+*.png
+*.pth
+
+
 
 ## Removing Code Optimizations
 __pycache__/**
