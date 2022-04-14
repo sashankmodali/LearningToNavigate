@@ -11,12 +11,12 @@ from collections import defaultdict
 
 from signal import signal, SIGINT
 
-import matplotlib.pyplot as plt
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchvision import datasets, models, transforms
+import torchvision.models as models
 
 from habitat_baselines.utils.common import CategoricalNet
 
@@ -83,6 +83,11 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             recurrent_hidden_state_size,
         ):
             self.observations = {}
+            self.depth_predictions=torch.zeros(
+                num_steps + 1,
+                num_envs,
+                *observation_space.spaces["depth"].shape
+            )
 
             for sensor in observation_space.spaces:
                 self.observations[sensor] = torch.zeros(
@@ -125,6 +130,8 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             self.action_log_probs = self.action_log_probs.to(device)
             self.actions = self.actions.to(device)
             self.masks = self.masks.to(device)
+            if self.depth_predictions is not None:
+                self.depth_predictions = self.depth_predictions.to(device)
 
         def insert(
             self,
@@ -135,7 +142,9 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             value_preds,
             rewards,
             masks,
+            depth_predictions=None
         ):
+
             for sensor in observations:
                 self.observations[sensor][self.step + 1].copy_(
                     observations[sensor]
@@ -148,12 +157,18 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             self.value_preds[self.step].copy_(value_preds)
             self.rewards[self.step].copy_(rewards)
             self.masks[self.step + 1].copy_(masks)
+            if depth_predictions is not None:
+                self.depth_predictions[self.step+1].copy_(depth_predictions)
+            elif self.depth_predictions is not None:
+                self.depth_predictions = None
 
             self.step = (self.step + 1) % self.num_steps
 
         def after_update(self):
             for sensor in self.observations:
                 self.observations[sensor][0].copy_(self.observations[sensor][-1])
+            if self.depth_predictions is not None:
+                self.depth_predictions[0].copy_(self.depth_predictions[-1])
 
             self.recurrent_hidden_states[0].copy_(self.recurrent_hidden_states[-1])
             self.masks[0].copy_(self.masks[-1])
@@ -190,6 +205,11 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             for start_ind in range(0, num_processes, num_envs_per_batch):
                 observations_batch = defaultdict(list)
 
+                if self.depth_predictions is not None:
+                    depth_predictions_batch = []
+                else:
+                    depth_predictions_batch = None
+
                 recurrent_hidden_states_batch = []
                 actions_batch = []
                 value_preds_batch = []
@@ -210,6 +230,11 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                         self.recurrent_hidden_states[0:1, ind]
                     )
 
+                    if self.depth_predictions is not None:
+                        depth_predictions_batch.append(
+                            self.depth_predictions[:-1,ind]
+                        )
+
                     actions_batch.append(self.actions[:, ind])
                     value_preds_batch.append(self.value_preds[:-1, ind])
                     return_batch.append(self.returns[:-1, ind])
@@ -227,6 +252,8 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     observations_batch[sensor] = torch.stack(
                         observations_batch[sensor], 1
                     )
+                if self.depth_predictions is not None:
+                    depth_predictions_batch = torch.stack(depth_predictions_batch,1)
 
                 actions_batch = torch.stack(actions_batch, 1)
                 value_preds_batch = torch.stack(value_preds_batch, 1)
@@ -247,7 +274,8 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     observations_batch[sensor] = _flatten_helper(
                         T, N, observations_batch[sensor]
                     )
-
+                if self.depth_predictions is not None:
+                    depth_predictions_batch = _flatten_helper(T,N, depth_predictions_batch)
                 actions_batch = _flatten_helper(T, N, actions_batch)
                 value_preds_batch = _flatten_helper(T, N, value_preds_batch)
                 return_batch = _flatten_helper(T, N, return_batch)
@@ -266,6 +294,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     masks_batch,
                     old_action_log_probs_batch,
                     adv_targ,
+                    depth_predictions_batch
                 )
 
 
@@ -335,13 +364,19 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             help="value loss coefficient (default: 0.5)",
         )
         parser.add_argument(
+            "--depth-coef",
+            type=float,
+            default=0.01,
+            help="depth loss cefficient (default: 0.01)",
+        )
+        parser.add_argument(
             "--entropy-coef",
             type=float,
             default=0.01,
             help="entropy term coefficient (default: 0.01)",
         )
         parser.add_argument(
-            "--lr", type=float, default=7e-4, help="learning rate (default: 7e-4)"
+            "--lr", type=float, default=2.5e-4, help="learning rate (default: 7e-4)"
         )
         parser.add_argument(
             "--eps",
@@ -358,8 +393,8 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
         parser.add_argument(
             "--num-steps",
             type=int,
-            default=5,
-            help="number of forward steps in A2C (default: 5)",
+            default=128,
+            help="number of forward steps in A2C (default: 128)",
         )
         parser.add_argument("--hidden-size", type=int, default=512)
         parser.add_argument(
@@ -381,6 +416,12 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             help="use a linear schedule on the learning rate",
         )
         parser.add_argument(
+            "--perception-model",
+            type=int,
+            default=0,
+            help="Choose Perception Model. 0 - 3L CNN, 1 - Resnet, 2 - Augmented depth, 3 Projected depth. (default: 0)",
+        )
+        parser.add_argument(
             "--use-linear-clip-decay",
             action="store_true",
             default=False,
@@ -399,7 +440,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             "--log-file", type=str, required=True, help="path for log file"
         )
         parser.add_argument(
-            "--save-file", type=str, default = "latest-train-results-from-train-ppo", help="path for rewards files"
+            "--save-file", type=str, default = "latest-results-from-train-ppo", help="path for rewards files"
         )
         parser.add_argument(
             "--reward-window-size",
@@ -463,18 +504,18 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             nargs=argparse.REMAINDER,
             help="Modify config options from command line",
         )
-        parser.add_argument(
-            "--num-episodes",
-            type=int,
-            default=300,
-            help="number of episodes to train (default:300)",
-        )
 
         parser.add_argument(
             "--load-train",
             type=int,
             default=-1,
             help="Load checkpoint for training",
+        )
+        parser.add_argument(
+            "--no-stop",
+            action="store_true",
+            default=False,
+            help="Don't use stop action",
         )
         return parser
 
@@ -485,7 +526,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             self,
             observation_space,
             action_space,
-            goal_sensor_uuid,
+            goal_sensor_uuid,args,
             hidden_size=512,
         ):
             super().__init__()
@@ -494,7 +535,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             self.net = Net(
                 observation_space=observation_space,
                 hidden_size=hidden_size,
-                goal_sensor_uuid=goal_sensor_uuid,
+                goal_sensor_uuid=goal_sensor_uuid,args=args,
             )
 
             self.action_distribution = CategoricalNet(
@@ -505,9 +546,15 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             raise NotImplementedError
 
         def act(self, observations, rnn_hidden_states, masks, deterministic=False):
-            value, actor_features, rnn_hidden_states = self.net(
-                observations, rnn_hidden_states, masks
-            )
+            if self.net.args.perception_model!=2:
+                value, actor_features, rnn_hidden_states = self.net(
+                    observations, rnn_hidden_states, masks
+                )
+            else:
+                value, actor_features, rnn_hidden_states,depth_predictions = self.net(
+                    observations, rnn_hidden_states, masks
+                )
+
             distribution = self.action_distribution(actor_features)
 
             if deterministic:
@@ -517,16 +564,27 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
             action_log_probs = distribution.log_probs(action)
 
-            return value, action, action_log_probs, rnn_hidden_states
+            if self.net.args.perception_model!=2:
+                return value, action, action_log_probs, rnn_hidden_states
+            else:
+                return value, action, action_log_probs, rnn_hidden_states, depth_predictions
 
         def get_value(self, observations, rnn_hidden_states, masks):
-            value, _, _ = self.net(observations, rnn_hidden_states, masks)
+            if self.net.args.perception_model!=2:
+                value, _, _ = self.net(observations, rnn_hidden_states, masks)
+            else:
+                value, _, _,_ = self.net(observations, rnn_hidden_states, masks)
             return value
 
         def evaluate_actions(self, observations, rnn_hidden_states, masks, action):
-            value, actor_features, rnn_hidden_states = self.net(
-                observations, rnn_hidden_states, masks
-            )
+            if self.net.args.perception_model!=2:
+                value, actor_features, rnn_hidden_states = self.net(
+                    observations, rnn_hidden_states, masks
+                )
+            else:
+                value, actor_features, rnn_hidden_states, depth_pred = self.net(
+                    observations, rnn_hidden_states, masks
+                )
             distribution = self.action_distribution(actor_features)
 
             action_log_probs = distribution.log_probs(action)
@@ -540,39 +598,46 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
         goal vector with CNN's output and passes that through RNN.
         """
 
-        def __init__(self, observation_space, hidden_size, goal_sensor_uuid):
+        def __init__(self, observation_space, hidden_size, goal_sensor_uuid,args):
             super().__init__()
+            self.args=args
             self.goal_sensor_uuid = goal_sensor_uuid
             self._n_input_goal = observation_space.spaces[
                 self.goal_sensor_uuid
             ].shape[0]
             self._hidden_size = hidden_size
 
-            self.cnn = self._init_perception_model(observation_space)
+            if self.args.perception_model==0:
+                self.cnn = self._init_perception_model(observation_space)
+            elif self.args.perception_model == 2:
+                self.cnn = self._init_perception_model(observation_space,False)
 
+            if self.args.perception_model != 0:
+                # #------------------------------------------------------------------------------- Resnetl5
+                self.dropout = 0.5
 
-            # #------------------------------------------------------------------------------- Resnetl5
-            # self.dropout = 0.5
+                resnet = models.resnet18(pretrained=True)
+                self.resnet = nn.Sequential(*list(resnet.children())[0:8])
+                for param in self.resnet.parameters():
+                    param.requires_grad = False
 
-            # resnet = models.resnet18(pretrained=True)
-            # self.resnet_l5 = nn.Sequential(*list(resnet.children())[0:8])
+                # Extra convolution layer
+                self.conv = nn.Sequential(*filter(bool, [
+                    nn.Conv2d(512, 1024, (7, 7), stride=(2, 2)),
+                    nn.ReLU(),
+                    nn.Flatten()
+                ]))
 
-            # # Extra convolution layer
-            # self.conv = nn.Sequential(*filter(bool, [
-            #     nn.Conv2d(512, 64, (1, 1), stride=(1, 1)),
-            #     nn.ReLU(),
-            #     nn.Flatten()
-            # ]))
+                # # projection layers
+                self.proj1 = nn.Linear(1024, hidden_size)
+                if self.dropout > 0:
+                    self.dropout1 = nn.Dropout(self.dropout)
+                self.linear = nn.Linear(hidden_size, hidden_size)
+                # # self.critic_linear = nn.Linear(hidden_size, 1)
+                # #---------------------------------------------------------------------------------------
 
-            # # projection layers
-            # self.proj1 = nn.Linear(1024, hidden_size)
-            # if self.dropout > 0:
-            #     self.dropout1 = nn.Dropout(self.dropout)
-            # self.linear = nn.Linear(hidden_size, hidden_size)
-            # self.critic_linear = nn.Linear(hidden_size, 1)
-            # # self.train()
-            # #-------------------------------------------------------------------------------
-
+            if self.args.perception_model==2 or self.args.perception_model==3:
+                self.deconv = nn.ConvTranspose2d(512, 1, (32, 32), stride=(32, 32), padding=(0, 0))
 
             if self.is_blind:
                 self.rnn = nn.GRU(self._n_input_goal, self._hidden_size)
@@ -585,8 +650,10 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
             self.layer_init()
             self.train()
+            if self.args.perception_model!=0:
+                self.resnet.eval()
 
-        def _init_perception_model(self, observation_space):
+        def _init_perception_model(self, observation_space,flag=True):
             if "rgb" in observation_space.spaces:
                 self._n_input_rgb = observation_space.spaces["rgb"].shape[2]
             else:
@@ -628,7 +695,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
                 return nn.Sequential(
                     nn.Conv2d(
-                        in_channels=self._n_input_rgb + self._n_input_depth,
+                        in_channels=self._n_input_rgb*flag + self._n_input_depth,
                         out_channels=32,
                         kernel_size=self._cnn_layers_kernel_size[0],
                         stride=self._cnn_layers_stride[0],
@@ -764,17 +831,29 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                 # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
                 rgb_observations = rgb_observations.permute(0, 3, 1, 2)
                 rgb_observations = rgb_observations / 255.0  # normalize RGB
+                if self.args.perception_model!=0:
+                    rgb_observations = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(rgb_observations)
                 cnn_input.append(rgb_observations)
 
             if self._n_input_depth > 0:
                 depth_observations = observations["depth"]
                 # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
                 depth_observations = depth_observations.permute(0, 3, 1, 2)
-                cnn_input.append(depth_observations)
+                if self.args.perception_model==0:
+                    cnn_input.append(depth_observations)
 
             cnn_input = torch.cat(cnn_input, dim=1)
 
-            return self.cnn(cnn_input)
+            if self.args.perception_model==1:
+                if self.dropout>0:
+                    return self.linear(nn.Dropout(self.dropout)(nn.ReLU()(self.proj1(self.conv(self.resnet(cnn_input)).view(-1,1024)))))
+                else:
+                    return self.linear(nn.ReLU()(self.proj1(self.conv(self.resnet(cnn_input)).view(-1,1024))))
+            elif self.args.perception_model==2:
+                self.depth_pred = self.deconv(self.resnet(cnn_input))
+                return self.cnn(self.depth_pred)
+            else:
+                return self.cnn(cnn_input)
 
         def forward(self, observations, rnn_hidden_states, masks):
             x = observations[self.goal_sensor_uuid]
@@ -785,8 +864,10 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
 
             x, rnn_hidden_states = self.forward_rnn(x, rnn_hidden_states, masks)
 
-            return self.critic_linear(x), x, rnn_hidden_states
-
+            if self.args.perception_model !=2:
+                return self.critic_linear(x), x, rnn_hidden_states
+            else:
+                return self.critic_linear(x), x, rnn_hidden_states, torch.sigmoid(self.depth_pred).permute(0,2,3,1)
 
     EPS_PPO = 1e-5
 
@@ -831,7 +912,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                 advantages.std() + EPS_PPO
             )
             def handler(signal_received, frame):
-                # Handle any cleanup here
+                # Handling any cleanup here. Saving plots and Rewards for continued training.
                 print('SIGINT or CTRL-C detected. Exiting gracefully. Saved checkpoint {}.'.format(update))
                 checkpoint = {"state_dict": self.state_dict()}
                 torch.save(
@@ -845,22 +926,6 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     test_rewards = np.array(test_reward_arr)
                     np.save(args.save_file,test_rewards)
 
-                    # # print(test_rewards)
-
-                    plt.figure
-                    ax1 = plt.subplot(3,1,1)
-                    ax1.set_title("Avg reward per episode vs episode")
-                    plt.plot(test_rewards[:,-1],test_rewards[:,0])
-                    ax2 = plt.subplot(3,1,2)
-                    ax2.set_title("Avg spl per episode vs episode")
-                    plt.plot(test_rewards[:,-1],test_rewards[:,1])
-                    ax3 = plt.subplot(3,1,3)
-                    ax3.set_title("Avg success rate per episode vs episode")
-                    plt.xlabel("Episodes")
-                    plt.plot(test_rewards[:,-1],test_rewards[:,2])
-                    plt.tight_layout()
-                    plt.savefig("{}.png".format(args.save_file))
-
                 sys.exit(0)
             signal(SIGINT, handler)
 
@@ -868,6 +933,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             value_loss_epoch = 0
             action_loss_epoch = 0
             dist_entropy_epoch = 0
+            depth_pred_loss = 0
 
             for e in range(self.ppo_epoch):
                 data_generator = rollouts.recurrent_generator(
@@ -884,6 +950,7 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                         masks_batch,
                         old_action_log_probs_batch,
                         adv_targ,
+                        depth_pred_batch,
                     ) = sample
 
                     # Reshape to do in a single forward pass for all steps
@@ -926,11 +993,17 @@ with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
                     else:
                         value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
+                    if depth_pred_batch is not None:
+                        depth_classes = (0, 0.05, 0.175, 0.3, 0.425, 0.55, 0.675, 0.8, 1)
+                        depth_pred_loss = torch.sum(torch.sum(torch.stack([depth_pred_batch > depth_class for depth_class in depth_classes]),dim=0) != torch.sum(torch.stack([obs_batch["depth"]/255.0> depth_class for depth_class in depth_classes]),dim=0))
+
+
                     self.optimizer.zero_grad()
                     (
                         value_loss * self.value_loss_coef
                         + action_loss
                         - dist_entropy * self.entropy_coef
+                        + args.depth_coef*depth_pred_loss
                     ).backward()
                     nn.utils.clip_grad_norm_(
                         self.actor_critic.parameters(), self.max_grad_norm

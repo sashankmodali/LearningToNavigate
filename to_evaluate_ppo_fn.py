@@ -21,109 +21,10 @@ from habitat.config.default import get_config as cfg_env
 from habitat.datasets.pointnav.pointnav_dataset import PointNavDatasetV1
 from ppo_model import PPO, Policy, batch_obs
 
-# class NavRLEnv(habitat.RLEnv):
-#     def __init__(self, config_env, config_baseline, dataset):
-#         self._config_env = config_env.TASK
-#         self._config_baseline = config_baseline
-#         self._previous_target_distance = None
-#         self._previous_action = None
-#         self._episode_distance_covered = None
-#         super().__init__(config_env, dataset)
-
-#     def reset(self):
-#         self._previous_action = None
-#         observations = super().reset()
-
-#         self._previous_target_distance = self.habitat_env.current_episode.info[
-#             "geodesic_distance"
-#         ]
-#         infos= self.get_info(observations)
-#         return observations, infos
-
-#     def step(self, action):
-#         self._previous_action = action
-#         return super().step(action)
-
-#     def get_reward_range(self):
-#         return (
-#             self._config_baseline.RL.SLACK_REWARD - 1.0,
-#             self._config_baseline.RL.SUCCESS_REWARD + 1.0,
-#         )
-
-#     def get_reward(self, observations):
-#         reward = self._config_baseline.RL.SLACK_REWARD
-
-#         current_target_distance = self._distance_target()
-#         reward += self._previous_target_distance - current_target_distance
-#         self._previous_target_distance = current_target_distance
-
-#         if self._episode_success():
-#             reward += self._config_baseline.RL.SUCCESS_REWARD
-
-#         return reward
-
-#     def _distance_target(self):
-#         current_position = self._env.sim.get_agent_state().position.tolist()
-#         target_position = self._env.current_episode.goals[0].position
-#         distance = self._env.sim.geodesic_distance(
-#             current_position, target_position
-#         )
-#         return distance
-
-#     def _episode_success(self):
-#         if (
-#             self._previous_action == HabitatSimActions.STOP
-#             and self._distance_target() < self._config_env.SUCCESS_DISTANCE
-#         ):
-#             return True
-#         return False
-
-#     def get_done(self, observations):
-#         done = False
-#         if self._env.episode_over or self._episode_success():
-#             done = True
-#         return done
-
-#     def get_info(self, observations):
-#         return self.habitat_env.get_metrics()
-
-
-# def make_env_fn(config_env, config_baseline, rank):
-#     dataset = PointNavDatasetV1(config_env.DATASET)
-#     config_env.defrost()
-#     config_env.SIMULATOR.SCENE = dataset.episodes[0].scene_id
-#     config_env.freeze()
-#     env = NavRLEnv(
-#         config_env=config_env, config_baseline=config_baseline, dataset=dataset
-#     )
-#     env.seed(rank)
-#     return env
 
 
 def eval_ppo(args,model_path,sim_gpu_id,pth_gpu_id,num_processes,count_test_episodes=100,hidden_size=512,sensors="RGB_SENSOR,DEPTH_SENSOR",task_config="habitat-lab/configs/tasks/pointnav.yaml"):
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--model-path", type=str, required=True)
-    # parser.add_argument("--sim-gpu-id", type=int, required=True)
-    # parser.add_argument("--pth-gpu-id", type=int, required=True)
-    # parser.add_argument("--num-processes", type=int, required=True)
-    # parser.add_argument("--hidden-size", type=int, default=512)
-    # parser.add_argument("--count-test-episodes", type=int, default=100)
-    # parser.add_argument(
-    #     "--sensors",
-    #     type=str,
-    #     default="RGB_SENSOR,DEPTH_SENSOR",
-    #     help="comma separated string containing different"
-    #     "sensors to use, currently 'RGB_SENSOR' and"
-    #     "'DEPTH_SENSOR' are supported",
-    # )
-    # parser.add_argument(
-    #     "--task-config",
-    #     type=str,
-    #     default="habitat-lab/configs/tasks/pointnav.yaml",
-    #     help="path to config yaml containing information about task",
-    # )
-    # args = parser.parse_args()
-
+    
     device = torch.device("cuda:{}".format(pth_gpu_id))
 
     env_configs = []
@@ -204,7 +105,7 @@ def eval_ppo(args,model_path,sim_gpu_id,pth_gpu_id,num_processes,count_test_epis
         observation_space=envs.observation_spaces[0],
         action_space=envs.action_spaces[0],
         hidden_size=512,
-        goal_sensor_uuid=env_configs[0].TASK.GOAL_SENSOR_UUID,
+        goal_sensor_uuid=env_configs[0].TASK.GOAL_SENSOR_UUID,args=args
     )
     actor_critic.to(device)
 
@@ -242,12 +143,20 @@ def eval_ppo(args,model_path,sim_gpu_id,pth_gpu_id,num_processes,count_test_epis
 
     while episode_counts.sum() < count_test_episodes:
         with torch.no_grad():
-            _, actions, _, test_recurrent_hidden_states = actor_critic.act(
-                batch,
-                test_recurrent_hidden_states,
-                not_done_masks,
-                deterministic=False,
-            )
+            if args.perception_model!=2:
+                _, actions, _, test_recurrent_hidden_states = actor_critic.act(
+                    batch,
+                    test_recurrent_hidden_states,
+                    not_done_masks,
+                    deterministic=False,
+                )
+            else:
+                _, actions, _, test_recurrent_hidden_states,_ = actor_critic.act(
+                    batch,
+                    test_recurrent_hidden_states,
+                    not_done_masks,
+                    deterministic=False,
+                )
 
         observations, rewards, dones, infos  = envs.step([a[0].item() for a in actions])
         batch = batch_obs(observations)
@@ -277,15 +186,10 @@ def eval_ppo(args,model_path,sim_gpu_id,pth_gpu_id,num_processes,count_test_epis
     episode_spl_mean = (episode_spls / episode_counts).mean().item()
     episode_success_mean = (episode_success / episode_counts).mean().item()
 
-    print("Average episode reward: {:.6f}".format(episode_reward_mean))
-    print("Average episode success: {:.6f}".format(episode_success_mean))
-    print("Average episode spl: {:.6f}".format(episode_spl_mean))
-
     return episode_reward_mean , episode_spl_mean, episode_success_mean
 
 
 # if __name__ == "__main__":
 #     pass
-    # eps_reward_mean , eps_spl_mean, eps_success_mean = main()
 
 from to_train_ppo import NavRLEnv, make_env_fn

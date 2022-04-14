@@ -5,16 +5,14 @@ habitat-lab
 habitat-lab/**
 tmp/**
 training_data/**
-milestone1.zip
-depth_net.pth
 pretrained_models/**
 checkpoints/**
 logs/**
+*.zip
 *.p
 *.npy
 *.png
 *.pth
-
 
 
 ## Removing Code Optimizations

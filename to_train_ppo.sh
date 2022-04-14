@@ -6,6 +6,5 @@ conda activate habitat
 
 export MAGNUM_LOG=quiet HABITAT_SIM_LOG=quiet
 export GLOG_minloglevel=2
-export MAGNUM_LOG=quiet
 
-python to_train_ppo.py --log-file log_file_test.p --save-file latest_results_from_to_train_ppo --checkpoint-folder ./to_checkpoints --sim-gpu-id 0 --pth-gpu-id 0 --num-processes 2 --num-mini-batch 2 --checkpoint-interval 1000 --num-updates 1000000 --load-train -1
+python to_train_ppo.py --log-file log_file_test.p --save-file latest_results_from_to_train_ppo --perception-model 0 -fw 256 -fh 256 --checkpoint-folder ./to_checkpoints --sim-gpu-id 0 --pth-gpu-id 0 --num-processes 2 --num-mini-batch 2 --checkpoint-interval 100 --num-updates 1000000 --load-train -1 --num-steps 128 --lr 2.5e-4 --use-gae --use-linear-lr-decay --use-linear-clip-decay --split val
