@@ -1,9 +1,6 @@
 ## Removing datasets and generated files
 data/**
-data
-habitat-lab
 habitat-lab/**
-!habitat-lab/data
 !habitat-lab/habitat_baselines/config
 !habitat-lab/habitat_baselines/rl
 !habitat-lab/configs
