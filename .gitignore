@@ -3,6 +3,13 @@ data/**
 data
 habitat-lab
 habitat-lab/**
+!habitat-lab/data
+!habitat-lab/habitat_baselines/config
+!habitat-lab/habitat_baselines/rl
+!habitat-lab/configs
+!habitat-lab/habitat/core/vector_env.py
+!habitat-lab/habitat_baselines/__init__.py
+!habitat-lab/habitat_baselines/run.py
 tmp/**
 training_data/**
 pretrained_models/**

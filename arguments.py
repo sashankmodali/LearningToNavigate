@@ -126,7 +126,7 @@ def get_args():
                         help='number of ppo epochs (default: 4)')
     parser.add_argument('--num_mini_batch', type=str, default="auto",
                         help='number of batches for ppo (default: 32)')
-    parser.add_argument('--clip_param', type=float, default=0.2,
+    parser.add_argument('--clip_param', type=float, default=0.1,
                         help='ppo clip parameter (default: 0.2)')
     parser.add_argument('--use_recurrent_global', type=int, default=0,
                         help='use a recurrent global policy')
