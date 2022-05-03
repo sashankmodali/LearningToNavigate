@@ -182,7 +182,7 @@ def main():
 
     actor_critic = ppo.actor_critic
 
-    observations,info = envs.reset()
+    observations,infos = envs.reset()
     batch = batch_obs(observations)
     for sensor in batch:
         batch[sensor] = batch[sensor].to(device)
@@ -207,7 +207,7 @@ def main():
                 deterministic=False,
             )
 
-        observations, rewards, dones, infos  = envs.step([a[0].item() for a in actions])
+        observations, rewards, dones, infos = envs.step([a[0].item() for a in actions])
         batch = batch_obs(observations)
         for sensor in batch:
             batch[sensor] = batch[sensor].to(device)
@@ -239,7 +239,7 @@ def main():
     print("Average episode success: {:.6f}".format(episode_success_mean))
     print("Average episode spl: {:.6f}".format(episode_spl_mean))
 
-    # return episode_reward_mean , episode_spl_mean, episode_success_mean
+    return episode_reward_mean , episode_spl_mean, episode_success_mean
 
 
 if __name__ == "__main__":

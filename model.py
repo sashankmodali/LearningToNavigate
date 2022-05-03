@@ -73,8 +73,8 @@ class Neural_SLAM_Module(nn.Module):
         super(Neural_SLAM_Module, self).__init__()
 
         self.device = args.device
-        self.screen_h = args.frame_height
-        self.screen_w = args.frame_width
+        self.screen_h = args.ans_frame_height
+        self.screen_w = args.ans_frame_width
         self.resolution = args.map_resolution
         self.map_size_cm = args.map_size_cm // args.global_downscaling
         self.n_channels = 3

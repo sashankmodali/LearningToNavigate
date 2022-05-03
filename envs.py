@@ -3,6 +3,7 @@ import os
 import pickle
 import sys
 import gym
+from habitat.utils.geometry_utils import quaternion_rotate_vector
 import matplotlib
 import numpy as np
 import quaternion
@@ -30,10 +31,12 @@ if sys.platform == 'darwin':
 else:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from habitat.core.vector_env import VectorEnv
+from habitat.sims.habitat_simulator.actions import HabitatSimActions
+from habitat.core.vector_env2 import VectorEnv
 from habitat.datasets.pointnav.pointnav_dataset import PointNavDatasetV1
 from habitat.config.default import get_config as cfg_env
 from habitat_baselines.config.default import get_config
+from ppo_utils import batch_obs
 
 def _preprocess_depth(depth):
     depth = depth[:, :, 0]*1
@@ -68,7 +71,11 @@ class VecPyTorch():
 
     def reset(self):
         obs,info = self.venv.reset()
-        obs = torch.from_numpy(obs).float().to(self.device)
+        # print(obs.shape)
+        # print(info)
+        obs  = batch_obs(obs)
+        for sensor in obs:
+            obs[sensor] = obs[sensor].to(self.device)
         return obs, info
 
     def step_async(self, actions):
@@ -82,9 +89,13 @@ class VecPyTorch():
         return obs, reward, done, info
 
     def step(self, actions):
-        actions = actions.cpu().numpy()
+        if torch.is_tensor(actions): 
+            actions = actions.cpu().numpy()
         obs, reward, done, info = self.venv.step(actions)
-        obs = torch.from_numpy(obs).float().to(self.device)
+        obs  = batch_obs(obs)
+        for sensor in obs:
+            obs[sensor] = obs[sensor].to(self.device)
+        # obs = torch.from_numpy(obs).float().to(self.device)
         reward = torch.from_numpy(reward).float()
         return obs, reward, done, info
 
@@ -174,8 +185,6 @@ def construct_envs(args):
         config_env.SIMULATOR.TURN_ANGLE = 10
         config_env.DATASET.SPLIT = args.split
 
-        config_env.TASK.SUCCESS.SUCCESS_DISTANCE =0.36
-        config_env.TASK.SUCCESS_DISTANCE =0.36
         config_env.freeze()
         env_configs.append(config_env)
         args_list.append(args)
@@ -220,7 +229,7 @@ class Exploration_Env(habitat.RLEnv):
                                                 num="Thread {}".format(rank))
 
         self.args = args
-        self.num_actions = 3
+        self.num_actions = 4
         self.dt = 10
 
         self.rank = rank
@@ -236,9 +245,14 @@ class Exploration_Env(habitat.RLEnv):
 
         self.action_space = gym.spaces.Discrete(self.num_actions)
 
-        self.observation_space = gym.spaces.Box(0, 255,
-                                                (3, args.frame_height,
-                                                    args.frame_width),
+        self.observation_space.spaces["depth"] = gym.spaces.Box(0, 255,
+                                                (args.frame_height,
+                                                    args.frame_width,1),
+                                                dtype='uint8')
+
+        self.observation_space.spaces["rgb"] = gym.spaces.Box(0, 255,
+                                                (args.frame_height,
+                                                    args.frame_width,3),
                                                 dtype='uint8')
 
         self.mapper = self.build_mapper()
@@ -305,11 +319,24 @@ class Exploration_Env(habitat.RLEnv):
         self.obs = rgb # For visualization
         
         if self.args.frame_width != self.args.env_frame_width:
-            rgb = np.asarray(self.res(rgb))
-            depth_ = np.asarray(self.res(depth_))
-            depth_ = np.expand_dims(depth_, axis=0)
-        #state = rgb.transpose(2, 0, 1)
-        state = np.concatenate((rgb.transpose(2, 0, 1), depth_))
+            print(self.res(rgb))
+            rgb = np.transpose(np.asarray(self.res(rgb)),(1,2,0))
+            depth_ = np.transpose(np.asarray(self.res(depth_)))
+
+            # print(depth_.shape)
+            # raise Exception("bulla")
+
+        self._previous_target_distance = self.habitat_env.current_episode.info[
+            "geodesic_distance"
+        ]
+        infos= self.get_info(obs)
+
+        obs_new = {}
+        obs_new["rgb"] = rgb
+        obs_new["depth"] = depth_
+        obs_new["pointgoal_with_gps_compass"] = obs["pointgoal_with_gps_compass"]
+
+
         
         depth = _preprocess_depth(obs['depth'])
         # To store as the dataset for Region proposal network
@@ -360,7 +387,7 @@ class Exploration_Env(habitat.RLEnv):
         self.info['success'] = self._env.get_metrics()["success"]
         self.save_position()
 
-        return state, self.info
+        return obs_new, self.info
 
     def step(self, action):
 
@@ -368,29 +395,47 @@ class Exploration_Env(habitat.RLEnv):
         self.timestep += 1
 
         # Action remapping
-        if action == 2: # Forward
-            action = 1
-        elif action == 1: # Right
-            action = 3
-        elif action == 0: # Left
+        if action == 0: 
             action = 2
-        elif (action == 3):# Stop
-            action = 0
+        # elif action == 1: # Right
+        #     action = 3
+        # elif action == 0: # Left
+        #     action = 2
+        # elif (action == 3):# Stop
+        #     action = 0
+        if self.info['distance_to_goal'] < 0.2:  # Stop
+            action = 0 
         self.last_loc = np.copy(self.curr_loc)
         self.last_loc_gt = np.copy(self.curr_loc_gt)
         self._previous_action = action
         
         self.last_rgb = np.copy(self.curr_rgb)
         self.last_depth = np.copy(self.curr_depth)
+        if self._env.episode_over is True:
+            obs, info = self.reset()
         obs, rew, done, info = super().step(action)
         # Preprocess observations
         rgb = obs['rgb'].astype(np.uint8)
+        depth_ = obs['depth'].astype(np.uint8)
         self.obs = rgb # For visualization
+        
         if self.args.frame_width != self.args.env_frame_width:
-            rgb = np.asarray(self.res(rgb))
-            depth_ = np.asarray(self.res(obs['depth']))
-            depth_ = np.expand_dims(depth_, axis=0)
-        state = np.concatenate((rgb.transpose(2, 0, 1), depth_))
+            rgb = np.transpose(np.asarray(self.res(rgb)),(1,2,0))
+            depth_ = np.transpose(np.asarray(self.res(depth_)))
+
+            # print(depth_.shape)
+            # raise Exception("bulla")
+
+        self._previous_target_distance = self.habitat_env.current_episode.info[
+            "geodesic_distance"
+        ]
+        infos= self.get_info(obs)
+
+        obs_new = {}
+        obs_new["rgb"] = rgb
+        obs_new["depth"] = depth_
+        obs_new["pointgoal_with_gps_compass"] = obs["pointgoal_with_gps_compass"]
+
 
         depth = _preprocess_depth(obs['depth'])
 
@@ -481,9 +526,10 @@ class Exploration_Env(habitat.RLEnv):
         self.info['distance_to_goal'] = self._env.get_metrics()["distance_to_goal"]
         self.info['spl'] = self._env.get_metrics()["spl"]
         self.info['success'] = self._env.get_metrics()["success"]
-        if(action==0):
-            print(self.info['spl'])
-        return state, rew, done, self.info
+        # if(action==0):
+        #     print(self.info['spl'])
+        return obs_new, rew, done, self.info
+        # return obs, rew, done, self.info
 
     def get_goal_location(self, rel_goal_pos):
         agent_x, agent_y, agent_o = self.get_sim_location()
@@ -543,8 +589,19 @@ class Exploration_Env(habitat.RLEnv):
 
         return m_reward, m_ratio
 
+    def _episode_success(self):
+        if (
+            self._previous_action == HabitatSimActions.STOP
+            and self._distance_target() < self._config_env.SUCCESS_DISTANCE
+        ):
+            return True
+        return False
+
     def get_done(self, observations):
-        # This function is not used, Habitat-RLEnv requires this function
+        done = False
+        if self._env.episode_over or self._episode_success():
+            done = True
+        return done
         return False
 
     def get_info(self, observations):
@@ -733,13 +790,15 @@ class Exploration_Env(habitat.RLEnv):
                     int((dist_limits[2] - dist_limits[1])/dist_bin_size[2])
             return ddist
 
-        output = np.zeros((args.goals_size + 1))
+        output = np.zeros((args.goals_size + 1 + 2))
 
         # #prmstar path following for dataset generation
 
         output[0] = int((relative_angle%360.)/5.)
         output[1] = discretize(relative_dist)
         output[2] = gt_action
+        output[3] = relative_dist
+        output[4] = -np.radians(relative_angle)
 
         if args.visualize or args.print_images:
             dump_dir = "{}/dump/{}/".format(args.dump_location,
@@ -754,7 +813,7 @@ class Exploration_Env(habitat.RLEnv):
                                 self.collison_map[gx1:gx2, gy1:gy2],
                                 self.visited_vis[gx1:gx2, gy1:gy2],
                                 self.visited_gt[gx1:gx2, gy1:gy2],
-                                goal,
+                                goal,stg,
                                 self.explored_map[gx1:gx2, gy1:gy2],
                                 self.explorable_map[gx1:gx2, gy1:gy2],
                                 self.map[gx1:gx2, gy1:gy2] *

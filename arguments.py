@@ -9,7 +9,7 @@ def get_args():
     ## General Arguments
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed (default: 1)')
-    parser.add_argument('--auto_gpu_config', type=int, default=1)
+    parser.add_argument('--auto_gpu_config', type=int, default=0)
     parser.add_argument('--total_num_scenes', type=str, default="auto")
     parser.add_argument('-n', '--num_processes', type=int, default=4,
                         help="""how many training processes to use (default:4)
@@ -32,6 +32,8 @@ def get_args():
     parser.add_argument('--train_slam', type=int, default=1,
                         help="""0: Do not train the Neural SLAM Module
                                 1: Train the Neural SLAM Module (default: 1)""")
+    parser.add_argument('--agent', type=str, default="ans",
+                        help="ans, ppo, ppo_st")
 
     # Logging, loading models, visualization
     parser.add_argument('--log_interval', type=int, default=10,
@@ -67,9 +69,13 @@ def get_args():
                         help='Frame width (default:84)')
     parser.add_argument('-efh', '--env_frame_height', type=int, default=256,
                         help='Frame height (default:84)')
-    parser.add_argument('-fw', '--frame_width', type=int, default=128,
+    parser.add_argument('-fw', '--frame_width', type=int, default=256,
                         help='Frame width (default:84)')
-    parser.add_argument('-fh', '--frame_height', type=int, default=128,
+    parser.add_argument('-fh', '--frame_height', type=int, default=256,
+                        help='Frame height (default:84)')
+    parser.add_argument('-ansfw', '--ans_frame_width', type=int, default=128,
+                        help='Frame width (default:84)')
+    parser.add_argument('-ansfh', '--ans_frame_height', type=int, default=128,
                         help='Frame height (default:84)')
     parser.add_argument('-el', '--max_episode_length', type=int, default=500,
                         help="""Maximum episode length in seconds for

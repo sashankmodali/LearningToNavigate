@@ -16,9 +16,11 @@ from arguments import get_args
 from envs import make_vec_envs
 from utils.storage import GlobalRolloutStorage, FIFOMemory
 from utils.optimization import get_optimizer
-from model import RL_Policy, Local_IL_Policy, Neural_SLAM_Module
-
+from model import Local_IL_Policy, Neural_SLAM_Module
+from ppo_utils import PPO, Policy
+from torchvision import transforms
 import algo
+from PIL import Image
 
 import sys
 import matplotlib
@@ -93,24 +95,24 @@ def main():
     pose_costs = deque(maxlen=1000)
 
     l_masks = torch.zeros(num_scenes).float().to(device)
-    ppo_masks = torch.zeros(num_scenes).float().to(device)
+    # ppo_masks = torch.zeros(num_scenes).float().to(device)
 
     best_local_loss = np.inf
-    best_ppo_reward = -np.inf
+    # best_ppo_reward = -np.inf
 
-    if args.eval:
-        traj_lengths = args.max_episode_length // args.num_local_steps
-        #explored_area_log = np.zeros((num_scenes, num_episodes, traj_lengths))
-        #explored_ratio_log = np.zeros((num_scenes, num_episodes, traj_lengths))
+    # if args.eval:
+    #     traj_lengths = args.max_episode_length // args.num_local_steps
+    #     #explored_area_log = np.zeros((num_scenes, num_episodes, traj_lengths))
+    #     #explored_ratio_log = np.zeros((num_scenes, num_episodes, traj_lengths))
 
-    ppo_episode_rewards = deque(maxlen=1000)
-    ppo_value_losses = deque(maxlen=1000)
-    ppo_action_losses = deque(maxlen=1000)
-    ppo_dist_entropies = deque(maxlen=1000)
+    # ppo_episode_rewards = deque(maxlen=1000)
+    # ppo_value_losses = deque(maxlen=1000)
+    # ppo_action_losses = deque(maxlen=1000)
+    # ppo_dist_entropies = deque(maxlen=1000)
 
-    per_step_ppo_rewards = deque(maxlen=1000)
+    # per_step_ppo_rewards = deque(maxlen=1000)
 
-    ppo_process_rewards = np.zeros((num_scenes))
+    # ppo_process_rewards = np.zeros((num_scenes))
 
     l_action_losses = deque(maxlen=1000)
 
@@ -141,6 +143,12 @@ def main():
     # Initial full and local pose
     full_pose = torch.zeros(num_scenes, 3).float().to(device)
     local_pose = torch.zeros(num_scenes, 3).float().to(device)
+
+    rgb_obs = torch.zeros(num_scenes,3,args.ans_frame_width, args.ans_frame_height).to(device)
+    test_recurrent_hidden_states = torch.zeros(
+        num_scenes, 512, device=device
+    )
+    not_done_masks = torch.zeros(num_scenes, 1, device=device)
 
     # Origin of local map
     origins = np.zeros((num_scenes, 3))
@@ -211,28 +219,28 @@ def main():
     # Local policy observation space
     l_observation_space = gym.spaces.Box(0, 255,
                                          (3,
-                                          args.frame_width,
-                                          args.frame_width), dtype='uint8')
+                                          args.ans_frame_width,
+                                          args.ans_frame_width), dtype='uint8')
 
     # Local and Global policy recurrent layer sizes
     l_hidden_size = args.local_hidden_size
-    ppo_hidden_size = args.global_hidden_size
+    # ppo_hidden_size = args.global_hidden_size
 
      # PPO policy observation space
-    ppo_observation_space = gym.spaces.Box(0, 255,
-                                         (4,args.frame_width,
-                                          args.frame_height), dtype='uint8')
+    # ppo_observation_space = gym.spaces.Box(0, 255,
+    #                                      (4,args.ans_frame_width,
+    #                                       args.ans_frame_height), dtype='uint8')
 
     # Global policy action space
-    ppo_action_space = gym.spaces.Box(low=0.0, high=1.0,
-                                    shape=(3,), dtype=np.float32)
+    # ppo_action_space = gym.spaces.Box(low=0.0, high=1.0,
+                                    # shape=(3,), dtype=np.float32)
 
 
     # Local policy observation space
     l_observation_space = gym.spaces.Box(0, 255,
                                          (3,
-                                          args.frame_width,
-                                          args.frame_width), dtype='uint8')
+                                          args.ans_frame_width,
+                                          args.ans_frame_width), dtype='uint8')
 
 
     # slam
@@ -243,7 +251,7 @@ def main():
     
 
     # Local policy
-    l_policy = Local_IL_Policy(l_observation_space.shape, envs.action_space.n,
+    l_policy = Local_IL_Policy(l_observation_space.shape, 3,
                                recurrent=args.use_recurrent_local,
                                hidden_size=l_hidden_size,
                                deterministic=args.use_deterministic_local).to(device)
@@ -251,23 +259,49 @@ def main():
                                     args.local_optimizer)
 
     # Global policy
-    ppo_policy = RL_Policy(ppo_observation_space.shape, ppo_action_space,
-                         base_kwargs={'recurrent': args.use_recurrent_global,
-                                      'hidden_size': ppo_hidden_size,
-                                      'downscaling': args.global_downscaling
-                                      }).to(device)
-    ppo_agent = algo.PPO(ppo_policy, args.clip_param, args.ppo_epoch,
-                       args.num_mini_batch, args.value_loss_coef,
-                       args.entropy_coef, lr=args.global_lr, eps=args.eps,
-                       max_grad_norm=args.max_grad_norm)
+    # ppo_policy = RL_Policy(ppo_observation_space.shape, ppo_action_space,
+    #                      base_kwargs={'recurrent': args.use_recurrent_global,
+    #                                   'hidden_size': ppo_hidden_size,
+    #                                   'downscaling': args.global_downscaling
+    #                                   }).to(device)
+    # ppo_agent = algo.PPO(ppo_policy, args.clip_param, args.ppo_epoch,
+    #                    args.num_mini_batch, args.value_loss_coef,
+    #                    args.entropy_coef, lr=args.global_lr, eps=args.eps,
+    #                    max_grad_norm=args.max_grad_norm)
+
+    resnet = transforms.Compose([transforms.ToPILImage(),
+                    transforms.Resize((args.ans_frame_height, args.ans_frame_width),
+                                      interpolation = Image.NEAREST)])
+
+    actor_critic = Policy(
+        observation_space=envs.observation_space,
+        action_space=envs.action_space,
+        hidden_size=512,
+        goal_sensor_uuid='pointgoal_with_gps_compass',
+    )
+    actor_critic.to(device)
+
+    ppo = PPO(
+        actor_critic=actor_critic,
+        clip_param=0.2,
+        ppo_epoch=4,
+        num_mini_batch=32,
+        value_loss_coef=0.5,
+        entropy_coef=0.01,
+        lr=2.5e-4,
+        eps=1e-5,
+        max_grad_norm=0.5,
+    )                   
+
 
     slam_memory = FIFOMemory(args.slam_memory_size)
     # Storage
-    ppo_rollouts = GlobalRolloutStorage(args.num_global_steps,
-                                      num_scenes, ppo_observation_space.shape,
-                                      ppo_action_space, ppo_policy.rec_state_size,
-                                      1).to(device)
+    # ppo_rollouts = GlobalRolloutStorage(args.num_global_steps,
+    #                                   num_scenes, ppo_observation_space.shape,
+    #                                   ppo_action_space, ppo_policy.rec_state_size,
+    #                                   1).to(device)
 
+    
     # Loading model
     if args.load_slam != "0":
         print("Loading slam {}".format(args.load_slam))
@@ -285,10 +319,20 @@ def main():
                                 map_location=lambda storage, loc: storage)
         l_policy.load_state_dict(state_dict)
     if args.load_global != "0":
-        print("Loading ppo {}".format(args.load_global))
-        state_dict = torch.load(args.load_global,
-                                map_location=lambda storage, loc: storage)
-        ppo_policy.load_state_dict(state_dict)    
+       
+        ckpt = torch.load('habitat_baselines/rgbd.pth', map_location=device)
+        state = ckpt["state_dict"]
+
+        reordering = torch.tensor([3, 0, 1, 2], dtype=torch.long)
+        for k in [
+            "actor_critic.action_distribution.linear.weight",
+            "actor_critic.action_distribution.linear.bias",
+        ]:
+            state[k] = state[k][reordering]
+
+
+        ckpt["state_dict"] = state
+        ppo.load_state_dict(ckpt["state_dict"])
 
     if not args.train_local:
         l_policy.eval()
@@ -299,15 +343,19 @@ def main():
          in range(num_scenes)])
     ).float().to(device)
 
+    for e in range(num_scenes):
+        rgb_obs[e] = torch.from_numpy(np.asarray(resnet(obs["rgb"][e].cpu().numpy().astype(np.uint8))).transpose(2, 0, 1)).to(device)
+
+
     _, _, local_map[:, 0, :, :], local_map[:, 1, :, :], _, local_pose = \
-        nslam_module(obs[:,0:3,:,:], obs[:,0:3,:,:], poses, local_map[:, 0, :, :],
+        nslam_module(rgb_obs, rgb_obs, poses, local_map[:, 0, :, :],
                      local_map[:, 1, :, :], local_pose)
 
     # Compute PPO policy input
     locs = local_pose.cpu().numpy()
     orientation = torch.zeros(num_scenes, 1).long()
     goals = np.zeros((num_scenes, 2))
-    ppo_input = torch.zeros(num_scenes, 4, args.frame_width, args.frame_height)
+    # ppo_input = torch.zeros(num_scenes, 4, args.frame_width, args.frame_height)
 
     for e in range(num_scenes):
         r, c = locs[e, 1], locs[e, 0]
@@ -325,18 +373,18 @@ def main():
         z_coordinate = r_goal * np.cos(theta_goal)
         x_coordinate = r_goal * np.sin(theta_goal)
         goals[e] = np.array([x_coordinate * 100.0 / args.map_resolution + loc_r, z_coordinate * 100.0 / args.map_resolution + loc_c ])
-    ppo_input = obs.float().to(device)
-    ppo_rollouts.obs[0].copy_(ppo_input)
+    # ppo_input = rgb_obs.float().to(device)
+    # ppo_rollouts.obs[0].copy_(ppo_input)
 
-    # Run PPO Policy (ppo_goals = navigation actions)
-    ppo_value, ppo_action, ppo_action_log_prob, ppo_rec_states = \
-        ppo_policy.act(
-            ppo_rollouts.obs[0],
-            ppo_rollouts.rec_states[0],
-            ppo_rollouts.masks[0],
-            extras=ppo_rollouts.extras[0],
-            deterministic=False
-        )
+    # # Run PPO Policy (ppo_goals = navigation actions)
+    # ppo_value, ppo_action, ppo_action_log_prob, ppo_rec_states = \
+    #     ppo_policy.act(
+    #         ppo_rollouts.obs[0],
+    #         ppo_rollouts.rec_states[0],
+    #         ppo_rollouts.masks[0],
+    #         extras=ppo_rollouts.extras[0],
+    #         deterministic=False
+    #     )
 
     # Compute planner inputs
     planner_inputs = [{} for e in range(num_scenes)]
@@ -349,13 +397,13 @@ def main():
     # Output stores local goals as well as the the ground-truth action
     output = envs.get_short_term_goal(planner_inputs)
 
-    last_obs = obs.detach()
+    last_obs = rgb_obs.detach()
     local_rec_states = torch.zeros(num_scenes, l_hidden_size).to(device)
     start = time.time()
 
     total_num_steps = -1
-    g_reward = 0
-    ppo_reward = torch.zeros(num_scenes, 1).to(device)
+    # g_reward = 0
+    # ppo_reward = torch.zeros(num_scenes, 1).to(device)
     torch.set_grad_enabled(False)
 
 
@@ -363,103 +411,123 @@ def main():
     for ep_num in range(num_episodes):
         for step in range(args.max_episode_length):
             total_num_steps += 1
-            ppo_step = step % args.num_global_steps
+            # ppo_step = step % args.num_global_steps
             l_step = step % args.num_local_steps
 
              # Sample actions from PPO policy
-            ppo_value, ppo_action, ppo_action_log_prob, ppo_rec_states = \
-                ppo_policy.act(
-                    ppo_rollouts.obs[ppo_step + 1],
-                    ppo_rollouts.rec_states[ppo_step + 1],
-                    ppo_rollouts.masks[ppo_step + 1],
-                    extras=ppo_rollouts.extras[ppo_step + 1],
-                    deterministic=False
-                )
-            ppo_actions = nn.Sigmoid()(ppo_action)
-            ppo_actions = torch.argmax(ppo_actions, dim = 1)   
+            # ppo_value, ppo_action, ppo_action_log_prob, ppo_rec_states = \
+            #     ppo_policy.act(
+            #         ppo_rollouts.obs[ppo_step + 1],
+            #         ppo_rollouts.rec_states[ppo_step + 1],
+            #         ppo_rollouts.masks[ppo_step + 1],
+            #         extras=ppo_rollouts.extras[ppo_step + 1],
+            #         deterministic=False
+            #     )
+            # ppo_actions = nn.Sigmoid()(ppo_action)
+            # ppo_actions = torch.argmax(ppo_actions, dim = 1)   
 
 
             # ------------------------------------------------------------------
             # Local Policy
             del last_obs
-            last_obs = obs.detach()
+            last_obs = rgb_obs.detach()
             local_masks = l_masks
-            local_goals = output[:, :-1].to(device).long()
+            local_goals = output[:, :3].to(device).long()
 
             if args.train_local:
                 torch.set_grad_enabled(True)
 
             action, action_prob, local_rec_states = l_policy(
-                obs[:,0:3,:,:],
+                rgb_obs,
                 local_rec_states,
                 local_masks,
                 extras=local_goals,
             )
 
             if args.train_local:
-                action_target = output[:, -1].long().to(device)
+                action_target = output[:, :3].long().to(device)
                 policy_loss += nn.CrossEntropyLoss()(action_prob, action_target)
                 torch.set_grad_enabled(False)
             l_action = action.cpu()
             # ------------------------------------------------------------------
 
+
+            with torch.no_grad():
+                _, actions, _, test_recurrent_hidden_states = actor_critic.act(
+                    obs,
+                    test_recurrent_hidden_states,
+                    not_done_masks,
+                    deterministic=False,
+                )
+            obs, rew, done, infos = envs.step([a[0].item() for a in actions])
+
+
+
             # ------------------------------------------------------------------
             # Env step
-            if args.eval:
-                for e in range(num_scenes):
-                    if (infos[e]['distance_to_goal'] < 0.36):
-                        l_action[e] = 3    
-                        ppo_actions[e] = 3 
-            obs, rew, done, infos = envs.step(l_action)
+            # if args.eval:
+            #     for e in range(num_scenes):
+            #         if (infos[e]['distance_to_goal'] < 0.36):
+            #             l_action[e] = 3    
+            #             ppo_actions[e] = 3 
+            # obs, rew, done, infos = envs.step(l_action)
             #obs, rew, done, infos = envs.step(ppo_actions)
+            #obs, rew, done, infos = envs.step(l_action.numpy())
+            for e in range(num_scenes):
+                rgb_obs[e] = torch.from_numpy(np.asarray(resnet(obs["rgb"][e].cpu().numpy().astype(np.uint8))).transpose(2, 0, 1)).to(device)
+                if (obs["pointgoal_with_gps_compass"][e][0] > 5):
+                    obs["pointgoal_with_gps_compass"][e] = output[e][3:5]
+                    obs["pointgoal_with_gps_compass"][e][0]+=0.5
             if args.eval:
                 for e in range(num_scenes):
                     if (infos[e]['success'] or done[e]):
                         splfile.write(str(infos[e]['spl']) + '\t' + str(infos[e]['success']) + "\n")
-                        splfile.flush()
+                        # splfile.flush()
 
-                        obs_, info = envs.reset_at(e)
-                        obs[e] = obs_
-                        infos[e] = copy.deepcopy(info[0])  
+                        # obs_, info = envs.reset_at(e)
+                        # obs[e] = obs_
+                        # infos[e] = copy.deepcopy(info[0]) 
+                        splfile.flush()  
                         init_map_and_pose_at(e)
-                        last_obs[e] = obs[e].detach()  
+                        last_obs[e] = rgb_obs[e].detach()  
             l_masks = torch.FloatTensor([0 if x else 1
                                          for x in done]).to(device)
-            # ------------------------------------------------------------------
-            # PPO Rewards
-            # Get exploration reward and metrics
-            ppo_reward = torch.from_numpy(np.asarray(
-                [rew[env_idx] for env_idx
-                    in range(num_scenes)])
-            ).float().to(device)
+            # # ------------------------------------------------------------------
+            # # PPO Rewards
+            # # Get exploration reward and metrics
+            # ppo_reward = torch.from_numpy(np.asarray(
+            #     [rew[env_idx] for env_idx
+            #         in range(num_scenes)])
+            # ).float().to(device)
 
-            if args.eval:
-                ppo_reward = ppo_reward
+            # if args.eval:
+            #     ppo_reward = ppo_reward
 
-            ppo_process_rewards += ppo_reward.cpu().numpy()
-            ppo_total_rewards = ppo_process_rewards * \
-                                (1 - ppo_masks.cpu().numpy())
-            ppo_process_rewards *= ppo_masks.cpu().numpy()
-            per_step_ppo_rewards.append(np.mean(ppo_reward.cpu().numpy()))
+            # ppo_process_rewards += ppo_reward.cpu().numpy()
+            # ppo_total_rewards = ppo_process_rewards * \
+            #                     (1 - ppo_masks.cpu().numpy())
+            # ppo_process_rewards *= ppo_masks.cpu().numpy()
+            # per_step_ppo_rewards.append(np.mean(ppo_reward.cpu().numpy()))
 
-            if np.sum(ppo_total_rewards) != 0:
-                for tr in ppo_total_rewards:
-                    ppo_episode_rewards.append(tr) if tr != 0 else None
+            # if np.sum(ppo_total_rewards) != 0:
+            #     for tr in ppo_total_rewards:
+            #         ppo_episode_rewards.append(tr) if tr != 0 else None
             
-            # Add samples to PPO policy storage
-            ppo_rollouts.insert(
-                ppo_input, ppo_rec_states,
-                ppo_action, ppo_action_log_prob, ppo_value,
-                ppo_reward, ppo_masks, orientation
-            )
+            # # Add samples to PPO policy storage
+            # ppo_rollouts.insert(
+            #     ppo_input, ppo_rec_states,
+            #     ppo_action, ppo_action_log_prob, ppo_value,
+            #     ppo_reward, ppo_masks, orientation
+            # )
             
-            # ------------------------------------------------------------------
-            # Reinitialize variables when episode ends
-            if not args.eval:
-                if step == args.max_episode_length - 1:  # Last episode step
-                    init_map_and_pose()
-                    del last_obs
-                    last_obs = obs.detach()
+            # # ------------------------------------------------------------------
+            # # Reinitialize variables when episode ends
+            # if not args.eval:
+            #     if step == args.max_episode_length - 1:  # Last episode step
+            #         init_map_and_pose()
+            #         del last_obs
+            #         last_obs = obs.detach()
+            not_done_masks = torch.tensor([[0.0] if done_ else [1.0] for done_ in done],dtype=torch.float,device=device,)
             # ------------------------------------------------------------------
 
             # ------------------------------------------------------------------
@@ -467,7 +535,7 @@ def main():
             if args.train_slam:
                 # Add frames to memory
                 for env_idx in range(num_scenes):
-                    env_obs = obs[env_idx].to("cpu")
+                    env_obs = rgb_obs[env_idx].to("cpu")
                     env_poses = torch.from_numpy(np.asarray(
                         infos[env_idx]['sensor_pose']
                     )).float().to("cpu")
@@ -490,7 +558,7 @@ def main():
             ).float().to(device)
 
             _, _, local_map[:, 0, :, :], local_map[:, 1, :, :], _, local_pose = \
-                nslam_module(last_obs[:,0:3,:,:], obs[:,0:3,:,:], poses, local_map[:, 0, :, :],
+                nslam_module(last_obs, rgb_obs, poses, local_map[:, 0, :, :],
                              local_map[:, 1, :, :], local_pose, build_maps=True)
 
             locs = local_pose.cpu().numpy()
@@ -622,23 +690,23 @@ def main():
 
             # ------------------------------------------------------------------
             # Train PPO Policy
-            if ppo_step % args.num_global_steps == args.num_global_steps - 1: 
-                if args.train_global:
-                    ppo_next_value = ppo_policy.get_value(
-                        ppo_rollouts.obs[-1],
-                        ppo_rollouts.rec_states[-1],
-                        ppo_rollouts.masks[-1],
-                        extras=ppo_rollouts.extras[-1]
-                    ).detach()
+            # if ppo_step % args.num_global_steps == args.num_global_steps - 1: 
+            #     if args.train_global:
+            #         ppo_next_value = ppo_policy.get_value(
+            #             ppo_rollouts.obs[-1],
+            #             ppo_rollouts.rec_states[-1],
+            #             ppo_rollouts.masks[-1],
+            #             extras=ppo_rollouts.extras[-1]
+            #         ).detach()
 
-                    ppo_rollouts.compute_returns(ppo_next_value, args.use_gae,
-                                               args.gamma, args.tau)
-                    g_value_loss, g_action_loss, g_dist_entropy = \
-                        ppo_agent.update(ppo_rollouts)
-                    ppo_value_losses.append(g_value_loss)
-                    ppo_action_losses.append(g_action_loss)
-                    ppo_dist_entropies.append(g_dist_entropy)
-                ppo_rollouts.after_update()
+            #         ppo_rollouts.compute_returns(ppo_next_value, args.use_gae,
+            #                                    args.gamma, args.tau)
+            #         g_value_loss, g_action_loss, g_dist_entropy = \
+            #             ppo_agent.update(ppo_rollouts)
+            #         ppo_value_losses.append(g_value_loss)
+            #         ppo_action_losses.append(g_action_loss)
+            #         ppo_dist_entropies.append(g_dist_entropy)
+            #     ppo_rollouts.after_update()
             # ------------------------------------------------------------------
             # Train Local Policy
             if (l_step + 1) % args.local_policy_update_freq == 0 \
@@ -669,20 +737,20 @@ def main():
                                          / (end - start)))
                 ])
 
-                log += "\n\tRewards:"
-                if len(ppo_episode_rewards) > 0:
-                    log += " ".join([
-                        " Global step mean/med rew:",
-                        "{:.4f}/{:.4f},".format(
-                            np.mean(per_step_ppo_rewards),
-                            np.median(per_step_ppo_rewards)),
-                        " Global eps mean/med/min/max eps rew:",
-                        "{:.3f}/{:.3f}/{:.3f}/{:.3f},".format(
-                            np.mean(ppo_episode_rewards),
-                            np.median(ppo_episode_rewards),
-                            np.min(ppo_episode_rewards),
-                            np.max(ppo_episode_rewards))
-                    ])
+                # log += "\n\tRewards:"
+                # if len(ppo_episode_rewards) > 0:
+                #     log += " ".join([
+                #         " Global step mean/med rew:",
+                #         "{:.4f}/{:.4f},".format(
+                #             np.mean(per_step_ppo_rewards),
+                #             np.median(per_step_ppo_rewards)),
+                #         " Global eps mean/med/min/max eps rew:",
+                #         "{:.3f}/{:.3f}/{:.3f}/{:.3f},".format(
+                #             np.mean(ppo_episode_rewards),
+                #             np.median(ppo_episode_rewards),
+                #             np.min(ppo_episode_rewards),
+                #             np.max(ppo_episode_rewards))
+                #     ])
 
                 log += "\n\tLosses:"
 
@@ -693,14 +761,14 @@ def main():
                             np.mean(l_action_losses))
                     ])
 
-                if args.train_global and len(ppo_value_losses) > 0:
-                    log += " ".join([
-                        " Global Loss value/action/dist:",
-                        "{:.3f}/{:.3f}/{:.3f},".format(
-                            np.mean(ppo_value_losses),
-                            np.mean(ppo_action_losses),
-                            np.mean(ppo_dist_entropies))
-                    ])
+                # if args.train_global and len(ppo_value_losses) > 0:
+                #     log += " ".join([
+                #         " Global Loss value/action/dist:",
+                #         "{:.3f}/{:.3f}/{:.3f},".format(
+                #             np.mean(ppo_value_losses),
+                #             np.mean(ppo_action_losses),
+                #             np.mean(ppo_dist_entropies))
+                #     ])
                 if args.train_slam and len(costs) > 0:
                     log += " ".join([
                         " SLAM Loss proj/exp/pose:"
@@ -735,12 +803,12 @@ def main():
 
                     best_local_loss = np.mean(l_action_losses)
                  # Save Global Policy Model
-                if len(ppo_episode_rewards) >= 100 and \
-                        (np.mean(ppo_episode_rewards) >= best_ppo_reward) \
-                        and not args.eval:
-                    torch.save(ppo_policy.state_dict(),
-                               os.path.join(log_dir, "model_best.ppo"))
-                    best_ppo_reward = np.mean(ppo_episode_rewards)
+                # if len(ppo_episode_rewards) >= 100 and \
+                #         (np.mean(ppo_episode_rewards) >= best_ppo_reward) \
+                #         and not args.eval:
+                #     torch.save(ppo_policy.state_dict(),
+                #                os.path.join(log_dir, "model_best.ppo"))
+                #     best_ppo_reward = np.mean(ppo_episode_rewards)
 
             # Save periodic models
             if (total_num_steps * num_scenes) % args.save_periodic < \
