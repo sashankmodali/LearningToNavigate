@@ -9,7 +9,7 @@ habitat-lab/**
 !habitat-lab/habitat_baselines/run.py
 tmp/**
 training_data/**
-pretrained_models/**
+# pretrained_models/**
 checkpoints/**
 logs/**
 *.zip
