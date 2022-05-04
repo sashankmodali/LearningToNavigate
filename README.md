@@ -16,7 +16,7 @@ conda activate habitat
 
 #### Clone the repository
 ```
-git clone https://github.com/kpant14/LearningToNavigate.git
+git clone https://github.com/sashankmodali/LearningToNavigate.git
 cd LearningToNavigate
 ```
 
@@ -24,7 +24,7 @@ cd LearningToNavigate
 
 Install Habitat-lab using following commands: 
 ```
-git clone --branch stable https://github.com/facebookresearch/habitat-lab.git
+git clone  https://github.com/sashankmodali/habitat-lab.git
 cd habitat-lab
 pip install -r requirements.txt
 python setup.py develop --all # install habitat and habitat_baselines
@@ -41,6 +41,7 @@ Object datasets can be downloaded from [here](http://dl.fbaipublicfiles.com/habi
 Folder structure should be as follows:</br>
 ```
 LearningToNavigate/
+  habitat-lab/
   data/
     scene_datasets/
       gibson/
@@ -57,6 +58,14 @@ LearningToNavigate/
     object_datasets/
       banana.glb
       ...        
+```
+
+#### Create symbolic link of data folder inside Habitat Lab
+
+```
+cd habitat-lab
+ln -s ../data data
+cd ..
 ```
 
 After setting up the environment:
@@ -96,4 +105,16 @@ conda activate habitat
 python nslam.py --split val --eval 1 --train_global 0 --train_local 0 --train_slam 0 --load_global pretrained_models/model_best.global --load_local pretrained_models/model_best.local --load_slam pretrained_models/model_best.slam -n 1 --print_images 1
 
 python generate_video.py
+```
+3. For Final Evaluations , run the following:
+```
+. eval_ppo_st.sh
+```
+  AND
+```
+. eval_ppo.sh
+```
+  AND
+```
+. eval_ans.sh
 ```
