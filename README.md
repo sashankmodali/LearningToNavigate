@@ -118,10 +118,10 @@ python generate_video.py
 ```
 . eval_ans.sh
 ```
-Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1/
+Then, the results can be obtained in /tmp/dump/[experiment]/episodes/1/1/
 #### After replacing tmp directory line in generate_video.py
 To generate video, run, 
 ```
 python generate_video.py
 ```
-Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1video.avi
+Then, the results can be obtained in /tmp/dump/[experiment]/episodes/1/1video.avi
