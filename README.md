@@ -68,7 +68,7 @@ ln -s ../data data
 cd ..
 ```
 
-After setting up the environment:
+#### After setting up the environment:
 
 1. For Milestone 1, run the following:
 ```
@@ -122,6 +122,6 @@ Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1/
 #### After replacing tmp directory line in generate_video.py
 To generate video, run, 
 ```
-. python generate_video.py
+python generate_video.py
 ```
 Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1video.avi
