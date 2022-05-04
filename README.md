@@ -16,7 +16,7 @@ conda activate habitat
 
 #### Clone the repository
 ```
-git clone https://github.com/kpant14/LearningToNavigate.git
+git clone https://github.com/sashankmodali/LearningToNavigate.git
 cd LearningToNavigate
 ```
 
@@ -24,7 +24,7 @@ cd LearningToNavigate
 
 Install Habitat-lab using following commands: 
 ```
-git clone --branch stable https://github.com/facebookresearch/habitat-lab.git
+git clone  https://github.com/sashankmodali/habitat-lab.git
 cd habitat-lab
 pip install -r requirements.txt
 python setup.py develop --all # install habitat and habitat_baselines
@@ -41,6 +41,7 @@ Object datasets can be downloaded from [here](http://dl.fbaipublicfiles.com/habi
 Folder structure should be as follows:</br>
 ```
 LearningToNavigate/
+  habitat-lab/
   data/
     scene_datasets/
       gibson/
@@ -59,7 +60,15 @@ LearningToNavigate/
       ...        
 ```
 
-After setting up the environment:
+#### Create symbolic link of data folder inside Habitat Lab
+
+```
+cd habitat-lab
+ln -s ../data data
+cd ..
+```
+
+#### After setting up the environment:
 
 1. For Milestone 1, run the following:
 ```
@@ -97,3 +106,22 @@ python nslam.py --split val --eval 1 --train_global 0 --train_local 0 --train_sl
 
 python generate_video.py
 ```
+4. For Final Evaluations , run the following:
+```
+. eval_ppo_st.sh
+```
+  AND
+```
+. eval_ppo.sh
+```
+  AND
+```
+. eval_ans.sh
+```
+Then, the results can be obtained in /tmp/dump/[experiment]/episodes/1/1/
+#### After replacing tmp directory line in generate_video.py
+To generate video, run, 
+```
+python generate_video.py
+```
+Then, the results can be obtained in /tmp/dump/[experiment]/episodes/1/1video.avi
