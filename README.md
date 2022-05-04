@@ -106,7 +106,7 @@ python nslam.py --split val --eval 1 --train_global 0 --train_local 0 --train_sl
 
 python generate_video.py
 ```
-3. For Final Evaluations , run the following:
+4. For Final Evaluations , run the following:
 ```
 . eval_ppo_st.sh
 ```
@@ -118,3 +118,10 @@ python generate_video.py
 ```
 . eval_ans.sh
 ```
+Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1/
+#### After replacing tmp directory line in generate_video.py
+To generate video, run, 
+```
+. python generate_video.py
+```
+Then, the results can be obtained in /tmp/dum/[experiment]/episodes/1/1video.avi
